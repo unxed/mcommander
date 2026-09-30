@@ -58,6 +58,11 @@
 #define MCVIEW_VTERM_DEFAULT_CELL_WIDTH  8
 #define MCVIEW_VTERM_DEFAULT_CELL_HEIGHT 16
 
+/* An application command (APC) longer than this is dropped whole, up to its terminator: the far2l
+   drag and drop frames are at most 64 KiB. Not more than a few may wait for the host. */
+#define VTERM_APC_MAX_LEN   (2 * 65536)
+#define VTERM_APC_MAX_QUEUE 32
+
 /*** file scope type declarations ****************************************************************/
 
 struct mcview_vterm_struct
@@ -72,6 +77,13 @@ struct mcview_vterm_struct
     gboolean osc_overflow;
     gboolean in_dcs;
     gboolean in_dcs_esc;
+    /* APC (ESC _ ... BEL or ST): the far2l extensions speak in it. What arrives whole is kept for
+       the host, which answers it; the terminal itself draws nothing of it. */
+    gboolean in_apc;
+    gboolean in_apc_esc;
+    gboolean apc_overflow;
+    GString *apc;
+    GQueue *apc_ready;
     gboolean csi_gt;
     gboolean in_esc_char;
     /* Which of G0..G3 the designation being read names, -1 when it names none. */
@@ -168,6 +180,7 @@ static vterm_event_t vterm_make (mcview_vterm_t *vt, vterm_result_t type);
 static void vterm_handle_osc (mcview_vterm_t *vt);
 static void vterm_finish_osc (mcview_vterm_t *vt);
 static void vterm_finish_sixel (mcview_vterm_t *vt);
+static void vterm_finish_apc (mcview_vterm_t *vt);
 static void vterm_images_clear (mcview_vterm_t *vt);
 static void vterm_history_trim (mcview_vterm_t *vt);
 static void vterm_images_shift (mcview_vterm_t *vt, int top, int bottom, int delta);
@@ -776,6 +789,23 @@ vterm_sixel_measure (const char *data, gsize len, int *width, int *height)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/* An APC is complete: kept for the host unless it was too long, which drops it whole. */
+
+static void
+vterm_finish_apc (mcview_vterm_t *vt)
+{
+    vt->in_apc = FALSE;
+    vt->in_apc_esc = FALSE;
+
+    if (!vt->apc_overflow && vt->apc->len > 0
+        && g_queue_get_length (vt->apc_ready) < VTERM_APC_MAX_QUEUE)
+        g_queue_push_tail (vt->apc_ready, g_strdup (vt->apc->str));
+
+    vt->apc_overflow = FALSE;
+    g_string_truncate (vt->apc, 0);
+}
+
+/* --------------------------------------------------------------------------------------------- */
 
 /* ESC \ closed the sixel data: it becomes a picture at the cursor, and the
    cursor goes below it, the way a terminal with sixel scrolling does. */
@@ -1358,6 +1388,7 @@ mcview_vterm_new (void)
     mcview_vterm_t *vt;
 
     vt = g_new0 (mcview_vterm_t, 1);
+    vt->apc_ready = g_queue_new ();
     mcview_ansi_state_init (&vt->ansi);
     vt->buf = mcview_terminal_buffer_new ();
     vt->dpy_top_row = MCVIEW_VTERM_FOLLOW_END;
@@ -1380,6 +1411,13 @@ mcview_vterm_free (mcview_vterm_t *vt)
 {
     if (vt == NULL)
         return;
+    if (vt->apc != NULL)
+        g_string_free (vt->apc, TRUE);
+    if (vt->apc_ready != NULL)
+    {
+        g_queue_free_full (vt->apc_ready, g_free);
+        vt->apc_ready = NULL;
+    }
     mcview_terminal_buffer_free (vt->buf);
     mcview_terminal_buffer_free (vt->snapshot_buf);
     if (vt->history != NULL)
@@ -1416,6 +1454,11 @@ mcview_vterm_reset (mcview_vterm_t *vt)
     vt->osc_overflow = FALSE;
     vt->in_dcs = FALSE;
     vt->in_dcs_esc = FALSE;
+    vt->in_apc = FALSE;
+    vt->in_apc_esc = FALSE;
+    vt->apc_overflow = FALSE;
+    if (vt->apc != NULL)
+        g_string_truncate (vt->apc, 0);
     vt->dcs_len = 0;
     vt->in_sixel = FALSE;
     vt->sixel_overflow = FALSE;
@@ -1632,6 +1675,25 @@ mcview_vterm_feed (mcview_vterm_t *vt, unsigned char byte)
         return vterm_make (vt, VTERM_CONSUMED);
     }
 
+    if (vt->in_apc)
+    {
+        if (vt->in_apc_esc)
+        {
+            vt->in_apc_esc = FALSE;
+            if (byte == '\\')
+                vterm_finish_apc (vt);
+        }
+        else if (byte == 0x07u)
+            vterm_finish_apc (vt);
+        else if (byte == ESC_CHAR)
+            vt->in_apc_esc = TRUE;
+        else if (vt->apc->len < VTERM_APC_MAX_LEN)
+            g_string_append_c (vt->apc, (char) byte);
+        else
+            vt->apc_overflow = TRUE;
+        return vterm_make (vt, VTERM_CONSUMED);
+    }
+
     if (vt->in_osc)
     {
         if (vt->in_osc_esc)
@@ -1690,6 +1752,15 @@ mcview_vterm_feed (mcview_vterm_t *vt, unsigned char byte)
             vt->param_count = 0;
             vt->current_param = 0;
             vt->has_current = FALSE;
+        }
+        else if (byte == '_')
+        {
+            vt->in_apc = TRUE;
+            vt->in_apc_esc = FALSE;
+            vt->apc_overflow = FALSE;
+            if (vt->apc == NULL)
+                vt->apc = g_string_new (NULL);
+            g_string_truncate (vt->apc, 0);
         }
         else if (byte == ']')
         {
@@ -2364,6 +2435,14 @@ guint
 mcview_vterm_osc133_generation (const mcview_vterm_t *vt)
 {
     return (vt != NULL) ? vt->osc133_generation : 0;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+char *
+mcview_vterm_take_apc (mcview_vterm_t *vt)
+{
+    return (vt != NULL && vt->apc_ready != NULL) ? g_queue_pop_head (vt->apc_ready) : NULL;
 }
 
 /* --------------------------------------------------------------------------------------------- */

@@ -87,3 +87,23 @@ is given up.
 Not there yet: directories, a bigger window than one request at a time, a progress bar
 and Esc to cancel a long copy, and dropping into the built-in terminal for the programs
 that run in it.
+
+### Programs in the built-in terminal
+
+The built-in terminal (mcterm) is a far2l terminal for the program that runs in it, so that
+a drop reaches it, and mc inside mc inside a far2l terminal works too. It answers
+`ESC _ far2l1 BEL` only while there is something to pass on: the terminal M-Commander itself
+runs in has the extensions on and drop reception bound. Any other program sees a plain terminal,
+as before.
+
+From then on the program is told as a far2l terminal tells it. Its keys come as far2l key events
+(mc's own keys, turned back into a virtual key, a character and the control key state), and a
+file dropped on the outer window over the terminal is announced to it as a drop of its own, at
+the cell of the terminal it landed on. The program's LIST and READ are answered with LIST and
+READ of the outer offer, one chunk at a time, nothing kept in between; its CLOSE releases the
+outer offer, and so do `ESC _ far2l0 BEL`, a new binding, the lease running out (600 seconds)
+and the terminal closing. The other far2l interactions (the clipboard, images and the like) are
+answered with the empty reply, which is how a far2l says it has none.
+
+The terminal serves what the outer one has: plain files, one READ at a time, at most 8 offers and
+chunks of at most 32 KiB. Mouse events of the extensions are not passed to the program yet.
