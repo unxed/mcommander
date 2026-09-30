@@ -30,6 +30,7 @@ EXTRA_DIST = \
 TESTS = \
 	clipboard_info \
 	input_clip_text \
+	tty_far2l_clipboard \
 	execute__execute_with_vfs_arg \
 	execute__execute_external_editor_or_viewer \
 	execute__execute_get_external_cmd_opts_from_config \
@@ -68,6 +69,9 @@ clipboard_info_SOURCES = \
 
 input_clip_text_SOURCES = \
 	input_clip_text.c
+
+tty_far2l_clipboard_SOURCES = \
+	tty_far2l_clipboard.c
 
 execute__execute_with_vfs_arg_SOURCES = \
 	execute__execute_with_vfs_arg.c

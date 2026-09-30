@@ -87,6 +87,10 @@ char *tty_keycode_to_keyname (const int keycode);
 /* mouse support */
 int tty_get_event (struct Gpm_Event *event, gboolean redo_event, gboolean block);
 gboolean is_idle (void);
+/* The clipboard of a terminal that speaks the far2l extensions */
+gboolean tty_far2l_clipboard_available (void);
+gboolean tty_far2l_clipboard_set (const char *text, size_t len);
+gboolean tty_far2l_clipboard_get (char **text, size_t *len);
 int tty_getch (void);
 GString *tty_paste_take (void);
 void tty_paste_sanitize (GString *text);
