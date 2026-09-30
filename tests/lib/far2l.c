@@ -364,3 +364,26 @@ START_TEST (test_far2l_name_is_safe)
 END_TEST
 
 /* --------------------------------------------------------------------------------------------- */
+
+int
+main (void)
+{
+    TCase *tc_core;
+
+    tc_core = tcase_create ("Core");
+
+    // Add new tests here: ***************
+    tcase_add_test (tc_core, test_far2l_read_request_vector);
+    tcase_add_test (tc_core, test_far2l_read_reply_vector);
+    tcase_add_test (tc_core, test_far2l_frame_decode);
+    tcase_add_test (tc_core, test_far2l_reply_errors);
+    tcase_add_test (tc_core, test_far2l_bind);
+    tcase_add_test (tc_core, test_far2l_list);
+    tcase_add_test (tc_core, test_far2l_event);
+    tcase_add_test (tc_core, test_far2l_name_is_safe);
+    // ***********************************
+
+    return mctest_run_all (tc_core);
+}
+
+/* --------------------------------------------------------------------------------------------- */

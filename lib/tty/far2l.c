@@ -46,17 +46,17 @@
 
 /*** file scope macro definitions ****************************************************************/
 
-#define F2L_INTERACT_DND          'd'
-#define F2L_INPUT_DND             'D'
-#define F2L_SUB_BIND              'b'
-#define F2L_SUB_LIST              'l'
-#define F2L_SUB_READ              'r'
-#define F2L_SUB_CLOSE             'c'
+#define F2L_INTERACT_DND 'd'
+#define F2L_INPUT_DND    'D'
+#define F2L_SUB_BIND     'b'
+#define F2L_SUB_LIST     'l'
+#define F2L_SUB_READ     'r'
+#define F2L_SUB_CLOSE    'c'
 
-#define F2L_MAX_MESSAGE           1024u
-#define F2L_MAX_ENTRY             (16u * 1024u)
-#define F2L_MAX_PAGE              64u
-#define F2L_MAX_FRAME             (2 * 65536u)
+#define F2L_MAX_MESSAGE  1024u
+#define F2L_MAX_ENTRY    (16u * 1024u)
+#define F2L_MAX_PAGE     64u
+#define F2L_MAX_FRAME    (2 * 65536u)
 /* every request has to be answered within this, a hung provider must not hold mc forever */
 #define F2L_REQUEST_TIMEOUT_MS 20000
 #define F2L_BIND_TIMEOUT_MS    500

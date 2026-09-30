@@ -222,28 +222,28 @@ static const struct decode_ds
     unsigned int cs;
     int code;
 } decode_ds[] = {
-    { 65, 97, 0, 'a' },                              // a
-    { 65, 65, 16, 'A' },                             // Shift-A
-    { 49, 33, 16, '!' },                             // Shift-1
-    { 65, 1, 8, XCTRL ('a') },                       // Ctrl-A
-    { 65, 1, 24, XCTRL ('a') },                      // Ctrl-Shift-A, as the keymap names it
-    { 65, 97, 2, ALT ('a') },                        // Alt-A
-    { 81, 64, 10, '@' },                             // AltGr-Q is @ on some layouts
-    { 13, 13, 0, '\n' },                             // Enter
-    { 13, 13, 8, KEY_M_CTRL | '\n' },                // Ctrl-Enter
-    { 9, 9, 16, KEY_M_SHIFT | '\t' },                // Shift-Tab
-    { 27, 27, 0, ESC_CHAR },                         // Esc
-    { 8, 8, 2, KEY_M_ALT | KEY_BACKSPACE },          // Alt-Backspace
-    { 32, 0, 8, XCTRL (' ') },                       // Ctrl-Space
-    { 39, 0, 264, KEY_M_CTRL | KEY_RIGHT },          // Ctrl-Right
-    { 38, 0, 272, KEY_M_SHIFT | KEY_UP },            // Shift-Up
-    { 36, 0, 256, KEY_HOME },                        // Home
-    { 46, 0, 256, KEY_DC },                          // Delete
-    { 112, 0, 0, KEY_F (1) },                        // F1
-    { 116, 0, 16, KEY_F (15) },                      // Shift-F5, F15 as the keymap names it
-    { 115, 0, 2, KEY_M_ALT | KEY_F (4) },            // Alt-F4
-    { 16, 0, 16, -1 },                               // Shift on its own
-    { 20, 0, 128, -1 },                              // Caps Lock
+    { 65, 97, 0, 'a' },                      // a
+    { 65, 65, 16, 'A' },                     // Shift-A
+    { 49, 33, 16, '!' },                     // Shift-1
+    { 65, 1, 8, XCTRL ('a') },               // Ctrl-A
+    { 65, 1, 24, XCTRL ('a') },              // Ctrl-Shift-A, as the keymap names it
+    { 65, 97, 2, ALT ('a') },                // Alt-A
+    { 81, 64, 10, '@' },                     // AltGr-Q is @ on some layouts
+    { 13, 13, 0, '\n' },                     // Enter
+    { 13, 13, 8, KEY_M_CTRL | '\n' },        // Ctrl-Enter
+    { 9, 9, 16, KEY_M_SHIFT | '\t' },        // Shift-Tab
+    { 27, 27, 0, ESC_CHAR },                 // Esc
+    { 8, 8, 2, KEY_M_ALT | KEY_BACKSPACE },  // Alt-Backspace
+    { 32, 0, 8, XCTRL (' ') },               // Ctrl-Space
+    { 39, 0, 264, KEY_M_CTRL | KEY_RIGHT },  // Ctrl-Right
+    { 38, 0, 272, KEY_M_SHIFT | KEY_UP },    // Shift-Up
+    { 36, 0, 256, KEY_HOME },                // Home
+    { 46, 0, 256, KEY_DC },                  // Delete
+    { 112, 0, 0, KEY_F (1) },                // F1
+    { 116, 0, 16, KEY_F (15) },              // Shift-F5, F15 as the keymap names it
+    { 115, 0, 2, KEY_M_ALT | KEY_F (4) },    // Alt-F4
+    { 16, 0, 16, -1 },                       // Shift on its own
+    { 20, 0, 128, -1 },                      // Caps Lock
 };
 
 START_PARAMETRIZED_TEST (test_far2l_decode, decode_ds)
@@ -271,7 +271,7 @@ START_TEST (test_far2l_short_packet)
     append_short_key ('c', 65, 1, 8);
     append_short_key ('C', 114, 0, 16);
     ck_assert_int_eq (get_key_code (1), XCTRL ('a'));
-    ck_assert_int_eq (get_key_code (1), -1);  // the release is nothing
+    ck_assert_int_eq (get_key_code (1), -1);          // the release is nothing
     ck_assert_int_eq (get_key_code (1), KEY_F (13));  // Shift-F3
 }
 END_TEST
@@ -338,7 +338,8 @@ END_TEST
 
 START_TEST (test_far2l_mouse_click)
 {
-    // left button down at column 11, row 4 (from 0), and up; the terminal counts from 0, xterm from 1
+    // left button down at column 11, row 4 (from 0), and up; the terminal counts from 0, xterm from
+    // 1
     append_mouse (FALSE, 0, 1, 11, 4);
     append_mouse (FALSE, 0, 0, 11, 4);
     ck_assert_str_eq (mouse_report (), "0;12;5M");
@@ -350,13 +351,13 @@ END_TEST
 
 START_TEST (test_far2l_mouse_buttons_drag_and_wheel)
 {
-    append_mouse (FALSE, 0, 2, 0, 0);       // right down
-    append_mouse (TRUE, 1, 2, 3, 1);        // moved with it held, in the short form
-    append_mouse (FALSE, 0, 0, 3, 1);       // up
-    append_mouse (FALSE, 0, 4, 0, 0);       // middle down
-    append_mouse (FALSE, 0, 0, 0, 0);       // up
-    append_mouse (FALSE, 1, 0, 5, 5);       // moved with nothing held: no event
-    append_mouse (FALSE, 4, 120u << 16, 1, 1);         // wheel up
+    append_mouse (FALSE, 0, 2, 0, 0);                      // right down
+    append_mouse (TRUE, 1, 2, 3, 1);                       // moved with it held, in the short form
+    append_mouse (FALSE, 0, 0, 3, 1);                      // up
+    append_mouse (FALSE, 0, 4, 0, 0);                      // middle down
+    append_mouse (FALSE, 0, 0, 0, 0);                      // up
+    append_mouse (FALSE, 1, 0, 5, 5);                      // moved with nothing held: no event
+    append_mouse (FALSE, 4, 120u << 16, 1, 1);             // wheel up
     append_mouse (FALSE, 4, (unsigned) -120 << 16, 1, 1);  // wheel down
     append_mouse (FALSE, 4, 120u << 16, 1, 1);
     ck_assert_str_eq (mouse_report (), "2;1;1M");

@@ -1635,8 +1635,9 @@ far2l_mouse_key (unsigned int flags, unsigned int buttons, int x, int y)
     unsigned int now = buttons & 0x7;
     size_t i;
 
-    if (!mouse_enabled || (use_mouse_p != MOUSE_XTERM_NORMAL_TRACKING
-                           && use_mouse_p != MOUSE_XTERM_BUTTON_EVENT_TRACKING))
+    if (!mouse_enabled
+        || (use_mouse_p != MOUSE_XTERM_NORMAL_TRACKING
+            && use_mouse_p != MOUSE_XTERM_BUTTON_EVENT_TRACKING))
         return -1;
 
     x = x < 0 ? 1 : x + 1;
@@ -1672,8 +1673,8 @@ far2l_mouse_key (unsigned int flags, unsigned int buttons, int x, int y)
                                             ESC_STR "[<%d;%d;%dM", map[i].number, x, y);
         // which button went up does not matter to mc, one release is enough
         if (released != 0)
-            len += (size_t) g_snprintf (report + len, sizeof (report) - len,
-                                        ESC_STR "[<0;%d;%dm", x, y);
+            len += (size_t) g_snprintf (report + len, sizeof (report) - len, ESC_STR "[<0;%d;%dm",
+                                        x, y);
     }
     last_buttons = now;
 
