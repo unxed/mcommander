@@ -33,6 +33,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -43,6 +44,7 @@
 #include "lib/event.h"
 
 #include "lib/vfs/vfs.h"
+#include "lib/tty/key.h"  // the far2l clipboard
 
 #include "src/execute.h"
 
@@ -89,6 +91,51 @@ clip_info_drop_home (void)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/* With no clipboard_store command, a terminal with the far2l extensions gets the clipfile as
+   the clipboard: the terminal asks its user once and keeps the answer. */
+static void
+clip_file_to_far2l (void)
+{
+    char *fname, *text = NULL;
+    gsize len = 0;
+
+    if (!tty_far2l_clipboard_available ())
+        return;
+
+    fname = mc_config_get_full_path (EDIT_HOME_CLIP_FILE);
+    if (g_file_get_contents (fname, &text, &len, NULL))
+        (void) tty_far2l_clipboard_set (text, len);
+    g_free (text);
+    g_free (fname);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+/* The other way: with no clipboard_paste command the clipboard of a far2l terminal becomes the
+   clipfile. Nothing changes when the terminal has none, refuses, or holds no text. */
+static void
+clip_file_from_far2l (void)
+{
+    char *text = NULL;
+    size_t len = 0;
+
+    if (!tty_far2l_clipboard_available () || !tty_far2l_clipboard_get (&text, &len))
+        return;
+
+    {
+        char *fname = mc_config_get_full_path (EDIT_HOME_CLIP_FILE);
+
+        if (g_file_set_contents (fname, text, (gssize) len, NULL))
+        {
+            (void) chmod (fname, clip_open_mode);
+            clip_info_drop_home ();
+        }
+        g_free (fname);
+    }
+    g_free (text);
+}
+
+/* --------------------------------------------------------------------------------------------- */
 /*** public functions ****************************************************************************/
 /* --------------------------------------------------------------------------------------------- */
 
@@ -105,7 +152,10 @@ clipboard_file_to_ext_clip (const gchar *event_group_name, const gchar *event_na
     (void) data;
 
     if (clipboard_store_path == NULL || clipboard_store_path[0] == '\0')
+    {
+        clip_file_to_far2l ();
         return TRUE;
+    }
 
     tmp = mc_config_get_full_path (EDIT_HOME_CLIP_FILE);
     cmd = g_strconcat (clipboard_store_path, " ", tmp, " 2>/dev/null", (char *) NULL);
@@ -134,7 +184,10 @@ clipboard_file_from_ext_clip (const gchar *event_group_name, const gchar *event_
     (void) data;
 
     if (clipboard_paste_path == NULL || clipboard_paste_path[0] == '\0')
+    {
+        clip_file_from_far2l ();
         return TRUE;
+    }
 
     p = mc_popen (clipboard_paste_path, TRUE, TRUE, NULL);
     if (p == NULL)

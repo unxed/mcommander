@@ -90,6 +90,10 @@ gboolean is_idle (void);
 int tty_getch (void);
 GString *tty_paste_take (void);
 void tty_paste_sanitize (GString *text);
+/* The clipboard of a terminal that speaks the far2l extensions */
+gboolean tty_far2l_clipboard_available (void);
+gboolean tty_far2l_clipboard_set (const char *text, size_t len);
+gboolean tty_far2l_clipboard_get (char **text, size_t *len);
 
 /* While waiting for input, the program can select on more than one file */
 typedef int (*select_fn) (int fd, void *info);

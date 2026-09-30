@@ -1793,6 +1793,281 @@ far2l_read_apc (void)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/* far2l clipboard. A request is ESC _ far2l: <base64 of a stack> BEL; the last value of the stack
+   is the id of the request, before it the class ('c', the clipboard) and the command, and the
+   arguments come first. The answer is ESC _ far2l<base64 of a stack>, its last value the id. The
+   terminal asks its user whether the client may use the clipboard, so a call may take a while. */
+
+#define FAR2L_CLIP_CLIENT_ID "mcommander-far2l-clipboard-client-0001"
+#define FAR2L_CLIP_MAX_TEXT  (4 * 1024 * 1024)
+#define FAR2L_CLIP_CF_TEXT   1
+
+// How long the terminal may take to answer: its user may have to say yes first
+static gint64 far2l_clip_timeout = 15 * G_USEC_PER_SEC;
+
+static void
+far2l_push_u8 (GByteArray *stk, guint8 v)
+{
+    g_byte_array_append (stk, &v, 1);
+}
+
+static void
+far2l_push_u32 (GByteArray *stk, guint32 v)
+{
+    guint8 b[4];
+    int i;
+
+    for (i = 0; i < 4; i++)
+        b[i] = (guint8) (v >> (8 * i));
+    g_byte_array_append (stk, b, 4);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/* The request, ready to write; the id is added to the stack. Caller frees. */
+
+static char *
+far2l_clip_request (GByteArray *stk, guint8 id)
+{
+    char *b64, *req;
+
+    far2l_push_u8 (stk, id);
+    b64 = g_base64_encode (stk->data, stk->len);
+    req = g_strconcat (ESC_STR "_far2l:", b64, "\a", (char *) NULL);
+    g_free (b64);
+    return req;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/* Read from the terminal until the answer with @id comes, up to @timeout_us. What else comes -
+   typed keys, other packets - is not the answer: the keys are collected in @typed to be put back,
+   the packets are dropped. NULL when there is no answer. Caller frees. */
+
+static GByteArray *
+far2l_clip_wait (guint8 id, gint64 timeout_us, GString *typed)
+{
+    const gint64 deadline = g_get_monotonic_time () + timeout_us;
+    GByteArray *answer = NULL;
+
+    while (answer == NULL && g_get_monotonic_time () < deadline)
+    {
+        int c = getch_with_timeout (50 * MC_USEC_PER_MSEC);
+        GString *apc;
+        gboolean esc = FALSE, done = FALSE;
+
+        if (c == -1)
+            continue;
+        if (c != ESC_CHAR)
+        {
+            g_string_append_c (typed, (char) c);
+            continue;
+        }
+
+        c = getch_with_timeout (KITTY_CSI_TIMEOUT);
+        if (c != '_')
+        {
+            // an Escape or Alt-key, or the start of a CSI: not ours
+            g_string_append_c (typed, ESC_CHAR);
+            if (c != -1)
+                g_string_append_c (typed, (char) c);
+            continue;
+        }
+
+        apc = g_string_new ("");
+        while (!done)
+        {
+            c = getch_with_timeout (KITTY_CSI_TIMEOUT);
+            if (c == -1 || c == '\a' || (esc && c == '\\'))
+                done = TRUE;
+            else if (c == ESC_CHAR)
+                esc = TRUE;
+            else
+            {
+                esc = FALSE;
+                if (apc->len < FAR2L_CLIP_MAX_TEXT * 2)
+                    g_string_append_c (apc, (char) c);
+            }
+        }
+
+        if (strncmp (apc->str, "far2l", 5) == 0 && apc->str[5] != '\0' && apc->str[5] != ':'
+            && strcmp (apc->str + 5, "ok") != 0)
+        {
+            gsize len = 0;
+            guchar *data = g_base64_decode (apc->str + 5, &len);
+
+            if (data != NULL && len > 0 && data[len - 1] == id)
+                answer = g_byte_array_new_take (data, len - 1);
+            else
+                g_free (data);
+        }
+        g_string_free (apc, TRUE);
+    }
+
+    return answer;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/* Send one clipboard command and take its answer, keeping what the user typed meanwhile */
+
+static GByteArray *
+far2l_clip_call (GByteArray *stk, guint8 cmd)
+{
+    static guint8 next_id = 0;
+    GString *typed = g_string_new ("");
+    GByteArray *answer;
+    guint8 id;
+    char *req;
+
+    far2l_push_u8 (stk, cmd);
+    far2l_push_u8 (stk, 'c');
+    do
+        id = ++next_id;
+    while (id == 0);
+
+    req = far2l_clip_request (stk, id);
+    tty_raw_write (req, strlen (req));
+    g_free (req);
+
+    answer = far2l_clip_wait (id, far2l_clip_timeout, typed);
+    if (typed->len > 0)
+        tty_unget_input ((const unsigned char *) typed->str, typed->len);
+    g_string_free (typed, TRUE);
+    return answer;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+static gboolean
+far2l_clip_pop (GByteArray *a, unsigned int size, guint64 *value)
+{
+    unsigned int i;
+
+    if (a->len < size)
+        return FALSE;
+    *value = 0;
+    for (i = 0; i < size; i++)
+        *value |= (guint64) a->data[a->len - 1 - i] << (8 * (size - 1 - i));
+    g_byte_array_set_size (a, a->len - size);
+    return TRUE;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/* Open the clipboard; TRUE when the terminal let this client in */
+
+static gboolean
+far2l_clip_open (void)
+{
+    GByteArray *stk = g_byte_array_new ();
+    GByteArray *answer;
+    guint64 status = 0;
+
+    g_byte_array_append (stk, (const guint8 *) FAR2L_CLIP_CLIENT_ID, strlen (FAR2L_CLIP_CLIENT_ID));
+    far2l_push_u32 (stk, (guint32) strlen (FAR2L_CLIP_CLIENT_ID));
+    answer = far2l_clip_call (stk, 'o');
+    g_byte_array_free (stk, TRUE);
+    if (answer == NULL)
+        return FALSE;
+
+    if (!far2l_clip_pop (answer, 1, &status))
+        status = 0;
+    g_byte_array_free (answer, TRUE);
+    return status == 1;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/* Close it; the terminal says nothing worth waiting for */
+
+static void
+far2l_clip_close (void)
+{
+    static const guint8 close_id = 0xFF;
+    GByteArray *stk = g_byte_array_new ();
+    char *req;
+
+    far2l_push_u8 (stk, 'c');
+    far2l_push_u8 (stk, 'c');
+    req = far2l_clip_request (stk, close_id);
+    tty_raw_write (req, strlen (req));
+    g_free (req);
+    g_byte_array_free (stk, TRUE);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+gboolean
+tty_far2l_clipboard_available (void)
+{
+    return far2l_input_active;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/** Put the text on the clipboard of a far2l terminal. FALSE when there is none, or it refused. */
+
+gboolean
+tty_far2l_clipboard_set (const char *text, size_t len)
+{
+    GByteArray *stk, *answer;
+    guint64 status = 0;
+
+    if (!far2l_input_active || text == NULL || len == 0 || len > FAR2L_CLIP_MAX_TEXT)
+        return FALSE;
+    if (!far2l_clip_open ())
+        return FALSE;
+
+    stk = g_byte_array_new ();
+    g_byte_array_append (stk, (const guint8 *) text, len);
+    far2l_push_u32 (stk, (guint32) len);
+    far2l_push_u32 (stk, FAR2L_CLIP_CF_TEXT);
+    answer = far2l_clip_call (stk, 's');
+    g_byte_array_free (stk, TRUE);
+    far2l_clip_close ();
+
+    if (answer == NULL)
+        return FALSE;
+    if (!far2l_clip_pop (answer, 1, &status))
+        status = 0;
+    g_byte_array_free (answer, TRUE);
+    return status == 1;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/** Take the text off the clipboard of a far2l terminal, which asks its user first. FALSE when
+    there is none. The text is NUL-terminated; caller frees. */
+
+gboolean
+tty_far2l_clipboard_get (char **text, size_t *len)
+{
+    GByteArray *stk, *answer;
+    guint64 n = 0;
+
+    *text = NULL;
+    *len = 0;
+    if (!far2l_input_active || !far2l_clip_open ())
+        return FALSE;
+
+    stk = g_byte_array_new ();
+    far2l_push_u32 (stk, FAR2L_CLIP_CF_TEXT);
+    answer = far2l_clip_call (stk, 'g');
+    g_byte_array_free (stk, TRUE);
+    far2l_clip_close ();
+
+    if (answer == NULL)
+        return FALSE;
+    if (far2l_clip_pop (answer, 4, &n) && n != 0xFFFFFFFF && n > 0 && n <= FAR2L_CLIP_MAX_TEXT
+        && answer->len >= n)
+    {
+        size_t l = (size_t) n;
+
+        // the text is C's, and ends in NULs the terminal counted
+        while (l > 0 && answer->data[answer->len - n + l - 1] == '\0')
+            l--;
+        *text = g_strndup ((const char *) answer->data + answer->len - n, l);
+        *len = l;
+    }
+    g_byte_array_free (answer, TRUE);
+    return *text != NULL && *len > 0;
+}
+
+/* --------------------------------------------------------------------------------------------- */
 /* Read the rest of a CSI sequence after the pending bytes and @c, and decode it.
    Returns -1 for a sequence that has no mc key. */
 
