@@ -100,6 +100,13 @@ gboolean old_esc_mode = TRUE;
 int old_esc_mode_timeout = G_USEC_PER_SEC;  // us, settable via env
 
 gboolean bracketed_pasting_in_progress = FALSE;
+gboolean tty_paste_as_block = FALSE;
+
+/* Limits of a bracketed paste taken as one block: its size, and how long the terminal may stay
+   silent before a paste that never ends is given up. */
+#define TTY_PASTE_MAX_BYTES (16 * 1024 * 1024)
+static gint64 tty_paste_gap_usec = 2 * G_USEC_PER_SEC;
+static GString *tty_paste_block = NULL;
 
 /* This table is a mapping between names and the constants we use
  * We use this to allow users to define alternate definitions for
@@ -2701,6 +2708,109 @@ done:
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/**
+ * Make the text of a paste safe to hand to a widget: a line break becomes LF and a tab stays;
+ * every other control byte, ESC included, is dropped, so nothing in it can be taken for a key,
+ * for an escape sequence or for the mark that ends the paste. Bytes of multibyte characters stay.
+ */
+
+void
+tty_paste_sanitize (GString *text)
+{
+    size_t i, o = 0;
+
+    for (i = 0; i < text->len; i++)
+    {
+        unsigned char c = (unsigned char) text->str[i];
+
+        if (c == '\r')
+        {
+            if (i + 1 < text->len && text->str[i + 1] == '\n')
+                continue;
+            c = '\n';
+        }
+        else if (c != '\n' && c != '\t' && (c < 0x20 || c == 0x7f))
+            continue;
+
+        text->str[o++] = (char) c;
+    }
+    g_string_truncate (text, o);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/* Read the paste up to ESC [ 2 0 1 ~. NULL if the terminal went silent in the middle of it. */
+
+static GString *
+tty_paste_collect (void)
+{
+    static const char end_mark[] = ESC_STR "[201~";
+    const size_t end_len = sizeof (end_mark) - 1;
+    GString *text = g_string_new ("");
+    char tail[sizeof (end_mark)] = "";
+    gint64 deadline = g_get_monotonic_time () + tty_paste_gap_usec;
+    gboolean ended = FALSE;
+
+    tty_nodelay (TRUE);
+    while (!ended)
+    {
+        int c = tty_lowlevel_getch ();
+
+        if (c == -1)
+        {
+            fd_set rs;
+            struct timeval tv;
+
+            if (g_get_monotonic_time () >= deadline)
+                break;
+
+            FD_ZERO (&rs);
+            FD_SET (input_fd, &rs);
+            tv.tv_sec = 0;
+            tv.tv_usec = 20000;
+            (void) select (input_fd + 1, &rs, NULL, NULL, &tv);
+            continue;
+        }
+
+        deadline = g_get_monotonic_time () + tty_paste_gap_usec;
+
+        memmove (tail, tail + 1, end_len - 1);
+        tail[end_len - 1] = (char) c;
+        // what does not fit is read and thrown away
+        if (text->len < TTY_PASTE_MAX_BYTES)
+            g_string_append_c (text, (char) c);
+        if (memcmp (tail, end_mark, end_len) == 0)
+        {
+            ended = TRUE;
+            if (text->len >= end_len
+                && memcmp (text->str + text->len - end_len, end_mark, end_len) == 0)
+                g_string_truncate (text, text->len - end_len);
+        }
+    }
+    tty_nodelay (FALSE);
+
+    if (!ended)
+    {
+        g_string_free (text, TRUE);
+        return NULL;
+    }
+
+    tty_paste_sanitize (text);
+    return text;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/** The text of the last paste event. The caller frees it. */
+
+GString *
+tty_paste_take (void)
+{
+    GString *text = tty_paste_block;
+
+    tty_paste_block = NULL;
+    return text;
+}
+
+/* --------------------------------------------------------------------------------------------- */
 /* Returns a character read from stdin with appropriate interpretation */
 /* Also takes care of generated mouse events */
 /* Returns EV_MOUSE if it is a mouse event */
@@ -2935,6 +3045,14 @@ tty_get_event (struct Gpm_Event *event, gboolean redo_event, gboolean block)
     {
         far2l_dnd_dispatch ();
         c = EV_NONE;
+    }
+    else if (c == MCKEY_BRACKETED_PASTING_START && tty_paste_as_block)
+    {
+        // The whole paste is one event for the widget that has the focus
+        if (tty_paste_block != NULL)
+            g_string_free (tty_paste_take (), TRUE);
+        tty_paste_block = tty_paste_collect ();
+        c = (tty_paste_block != NULL) ? MCKEY_PASTE : EV_NONE;
     }
     else if (c == MCKEY_BRACKETED_PASTING_START)
     {

@@ -1859,6 +1859,32 @@ END_TEST
 
 /* --------------------------------------------------------------------------------------------- */
 
+START_TEST (test_bracketed_paste_mode_is_tracked)
+{
+    mcview_vterm_t *vt = mcview_vterm_new ();
+
+    mcview_vterm_set_size (vt, 5, 20);
+    mcview_vterm_reset (vt);
+
+    ck_assert (!mcview_vterm_bracketed_paste (vt));
+    FEED (vt, "\033[?2004h");
+    ck_assert (mcview_vterm_bracketed_paste (vt));
+    // other private modes do not touch it
+    FEED (vt, "\033[?1h\033[?7l");
+    ck_assert (mcview_vterm_bracketed_paste (vt));
+    FEED (vt, "\033[?2004l");
+    ck_assert (!mcview_vterm_bracketed_paste (vt));
+
+    FEED (vt, "\033[?2004h");
+    mcview_vterm_reset (vt);
+    ck_assert (!mcview_vterm_bracketed_paste (vt));
+
+    mcview_vterm_free (vt);
+}
+END_TEST
+
+/* --------------------------------------------------------------------------------------------- */
+
 int
 main (void)
 {
@@ -1927,6 +1953,7 @@ main (void)
     tcase_add_test (tc_core, test_shift_out_prints_from_g1);
     tcase_add_test (tc_core, test_fish_startup_leaves_the_prompt_plain);
     tcase_add_test (tc_core, test_sgr_after_osc_and_dcs);
+    tcase_add_test (tc_core, test_bracketed_paste_mode_is_tracked);
 
     return mctest_run_all (tc_core);
 }

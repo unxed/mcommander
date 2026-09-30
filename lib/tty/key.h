@@ -43,6 +43,9 @@
 /* Return code for a file drop announced by a far2l terminal (see far2l.h) */
 #define MCKEY_FAR2L_DND -6
 
+/* A bracketed paste taken as one block: tty_paste_take() gives its text */
+#define MCKEY_PASTE -7
+
 /*** enums ***************************************************************************************/
 
 /*** structures declarations (and typedefs of structures)*****************************************/
@@ -68,6 +71,8 @@ extern gboolean old_esc_mode;
 extern int mou_auto_repeat;
 
 extern gboolean bracketed_pasting_in_progress;
+/* Set by a loop that can take a paste as one block (MCKEY_PASTE) */
+extern gboolean tty_paste_as_block;
 
 /*** declarations of public functions ************************************************************/
 
@@ -83,6 +88,8 @@ char *tty_keycode_to_keyname (const int keycode);
 int tty_get_event (struct Gpm_Event *event, gboolean redo_event, gboolean block);
 gboolean is_idle (void);
 int tty_getch (void);
+GString *tty_paste_take (void);
+void tty_paste_sanitize (GString *text);
 
 /* While waiting for input, the program can select on more than one file */
 typedef int (*select_fn) (int fd, void *info);

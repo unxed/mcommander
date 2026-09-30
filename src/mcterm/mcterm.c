@@ -2714,6 +2714,20 @@ mcterm_callback (Widget *w, Widget *sender, widget_msg_t msg, int parm, void *da
             return MSG_NOT_HANDLED;
         return mcterm_send_encoded_key (t, parm) ? MSG_HANDLED : MSG_NOT_HANDLED;
 
+    case MSG_PASTE:
+    {
+        const GString *text = (const GString *) data;
+
+        // While a search or a filter is typed, a paste is not for the shell
+        if (t->query_active)
+            return MSG_HANDLED;
+        if (t->child_dead || t->pty_master < 0)
+            return MSG_NOT_HANDLED;
+        if (!mcterm_send_paste (t, text->str, text->len))
+            message (D_ERROR, MSG_ERROR, "%s", _ ("The shell did not take the whole text"));
+        return MSG_HANDLED;
+    }
+
     case MSG_KEY:
         if (mcterm_query_key (t, parm) == MSG_HANDLED)
             return MSG_HANDLED;
@@ -3236,6 +3250,79 @@ mcterm_send_text (WMcTerm *t, const char *text)
     ok = mcterm_pty_send (t->pty_master, text, len, MCTERM_PASTE_STALL_USEC, mcterm_send_text_drain,
                           t);
     // Set after the transfer: the echo read on the way resets it, and bytes went out since.
+    t->line_typed = TRUE;
+    t->line_cleared = FALSE;
+    return ok;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+/* What the program is given for a paste. The text is cleaned first: no ESC, so it cannot end
+   the paste early with ESC[201~, and no other control byte but the line break and the tab. */
+char *
+mcterm_paste_bytes (const char *text, size_t len, gboolean bracketed, size_t *out_len)
+{
+    GString *out = g_string_sized_new (len + 16);
+    size_t end = len;
+    size_t i;
+
+    if (bracketed)
+        g_string_append (out, ESC_STR "[200~");
+    else
+        while (end > 0 && (text[end - 1] == '\n' || text[end - 1] == '\r'))
+            end--;
+
+    for (i = 0; i < end; i++)
+    {
+        unsigned char c = (unsigned char) text[i];
+
+        if (c == '\r' && i + 1 < end && text[i + 1] == '\n')
+            continue;
+        if (c == '\r')
+            c = '\n';
+
+        if (bracketed)
+        {
+            // the text stays as it is, but for the bytes that could act as keys
+            if (c != '\n' && c != '\t' && (c < 0x20 || c == 0x7f))
+                continue;
+        }
+        else if (c < 0x20 || c == 0x7f)
+            c = ' ';  // the lines become one; the user presses Enter
+
+        g_string_append_c (out, (char) c);
+    }
+
+    if (bracketed)
+        g_string_append (out, ESC_STR "[201~");
+
+    *out_len = out->len;
+    return g_string_free (out, FALSE);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+gboolean
+mcterm_send_paste (WMcTerm *t, const char *text, size_t len)
+{
+    char *bytes;
+    size_t n;
+    gboolean ok;
+
+    if (t == NULL || t->child_dead || t->pty_master < 0 || text == NULL || len == 0)
+        return FALSE;
+
+    bytes = mcterm_paste_bytes (text, len,
+                                t->vterm != NULL && mcview_vterm_bracketed_paste (t->vterm), &n);
+    // an empty paste in the marks sends nothing, and one that came out empty has nothing to say
+    if (n == 0 || (n == 12 && strncmp (bytes, ESC_STR "[200~", 6) == 0))
+    {
+        g_free (bytes);
+        return TRUE;
+    }
+    ok = mcterm_pty_send (t->pty_master, bytes, n, MCTERM_PASTE_STALL_USEC, mcterm_send_text_drain,
+                          t);
+    g_free (bytes);
     t->line_typed = TRUE;
     t->line_cleared = FALSE;
     return ok;

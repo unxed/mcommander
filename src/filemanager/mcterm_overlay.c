@@ -1629,6 +1629,33 @@ mcterm_overlay_clip_command (long command)
    editor instead. Called after mc's own keys have been dealt with, so what is left really is the
    command line's. */
 cb_ret_t
+mcterm_overlay_handle_paste (const GString *text)
+{
+    if (mcterm_panel == NULL)
+        return MSG_NOT_HANDLED;
+
+    if (mcterm_mode)
+    {
+        // The terminal is on screen: what is pasted is for the program in it
+        if (mcterm_pause_pending)
+            return MSG_NOT_HANDLED;
+    }
+    else if (!mcterm_overlay_shell_owns_cmdline ())
+        return MSG_NOT_HANDLED;
+    else
+    {
+        mcterm_overlay_focus_cmdline ();
+        mcterm_overlay_move_cmdline_to_shell ();
+    }
+
+    if (!mcterm_send_paste (mcterm_panel, text->str, text->len))
+        message (D_ERROR, MSG_ERROR, "%s", _ ("The shell did not take the whole text"));
+    return MSG_HANDLED;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+cb_ret_t
 mcterm_overlay_cmdline_key (int parm)
 {
     long command;
@@ -2031,6 +2058,13 @@ cb_ret_t
 mcterm_overlay_cmdline_key (int parm)
 {
     (void) parm;
+    return MSG_NOT_HANDLED;
+}
+
+cb_ret_t
+mcterm_overlay_handle_paste (const GString *text)
+{
+    (void) text;
     return MSG_NOT_HANDLED;
 }
 
