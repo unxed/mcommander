@@ -100,6 +100,13 @@ gboolean old_esc_mode = TRUE;
 int old_esc_mode_timeout = G_USEC_PER_SEC;  // us, settable via env
 
 gboolean bracketed_pasting_in_progress = FALSE;
+gboolean tty_paste_as_block = FALSE;
+
+/* Limits of a bracketed paste taken as one block: its size, and how long the terminal may stay
+   silent before a paste that never ends is given up. */
+#define TTY_PASTE_MAX_BYTES (16 * 1024 * 1024)
+static gint64 tty_paste_gap_usec = 2 * G_USEC_PER_SEC;
+static GString *tty_paste_block = NULL;
 
 /* This table is a mapping between names and the constants we use
  * We use this to allow users to define alternate definitions for
@@ -1362,6 +1369,43 @@ getch_with_timeout (unsigned int delay_us)
 }
 
 /* --------------------------------------------------------------------------------------------- */
+/* Called after ESC ]. A digit right behind it is no key: it is a late answer of the terminal to
+   an OSC query. It is read up to its BEL or ST and dropped. The digit gets a short wait, for an
+   answer that comes in two pieces. */
+
+static gboolean
+skip_osc_reply (void)
+{
+    int c;
+    int n;
+
+    c = getch_with_timeout (20 * 1000);
+    if (c == -1)
+        return FALSE;
+    if (!g_ascii_isdigit (c))
+    {
+        const unsigned char b = (unsigned char) c;
+
+        tty_unget_input (&b, 1);
+        return FALSE;
+    }
+
+    for (n = 0; n < 1024; n++)
+    {
+        c = getch_with_timeout (old_esc_mode_timeout);
+        if (c == -1 || c == '\a')
+            break;
+        if (c == ESC_CHAR)
+        {
+            (void) getch_with_timeout (old_esc_mode_timeout);
+            break;
+        }
+    }
+
+    return TRUE;
+}
+
+/* --------------------------------------------------------------------------------------------- */
 /* Is the pending sequence plus @c the start of a CSI sequence with numeric parameters? */
 
 static gboolean
@@ -1457,9 +1501,8 @@ kitty_key_code (int final, unsigned int key, unsigned int shifted, unsigned int 
             key &= 0x1F;
             mod &= ~KEY_M_CTRL;
         }
-        else if (!g_ascii_isdigit ((gchar) key))
+        else
             key = (unsigned int) XCTRL (key);
-        // else Ctrl-1 .. Ctrl-0 stay what they are: XCTRL would make them Ctrl-Q, Ctrl-R, ...
     }
 
     return mod | (int) key;
@@ -2260,8 +2303,7 @@ tty_keyname_to_keycode (const char *name, char **label)
 
     if (use_ctrl != -1)
     {
-        // "ctrl-1" is the digit with the modifier: XCTRL (k) would make it Ctrl-Q
-        if (k < 256 && !g_ascii_isdigit ((gchar) k))
+        if (k < 256)
             k = XCTRL (k);
         else
             k |= KEY_M_CTRL;
@@ -2492,10 +2534,24 @@ pend_send:
              * Small, but non-zero timeout is needed to reconnect
              * escape sequence split up by e.g. a serial line.
              */
-            int paranoia = 20;
+            int last = 0;
+            const gboolean csi = seq_buffer[0] == ESC_CHAR && seq_buffer[1] == '[';
+            /* A CSI answer of the terminal can be longer than 20 bytes: DA1 of xterm is 33. */
+            int paranoia = csi ? 256 : 20;
+            const int *p;
 
-            while (getch_with_timeout (old_esc_mode_timeout) >= 0 && --paranoia != 0)
-                ;
+            for (p = seq_buffer; *p != '\0'; p++)
+                last = *p;
+
+            /* A CSI sequence ends on its final byte: what comes after it is not its tail. */
+            if (!csi || last < 0x40 || last > 0x7e || p - seq_buffer <= 2)
+            {
+                int ch;
+
+                while ((ch = getch_with_timeout (old_esc_mode_timeout)) >= 0 && --paranoia != 0)
+                    if (csi && ch >= 0x40 && ch <= 0x7e)
+                        break;
+            }
         }
         else
             goto done;
@@ -2661,6 +2717,13 @@ nodelay_try_again:
         // No match found. Is it one of our ESC <key> specials?
         if ((parent != NULL) && (parent->action == MCKEY_ESCAPE))
         {
+            if (c == ']' && skip_osc_reply ())
+            {
+                pending_keys = seq_append = NULL;
+                this = NULL;
+                return -1;
+            }
+
             // Convert escape-digits to F-keys
             if (g_ascii_isdigit (c))
                 c = KEY_F (c - '0');
@@ -2700,6 +2763,109 @@ nodelay_try_again:
 done:
     this = NULL;
     return correct_key_code (c, from_sequence);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/**
+ * Make the text of a paste safe to hand to a widget: a line break becomes LF and a tab stays;
+ * every other control byte, ESC included, is dropped, so nothing in it can be taken for a key,
+ * for an escape sequence or for the mark that ends the paste. Bytes of multibyte characters stay.
+ */
+
+void
+tty_paste_sanitize (GString *text)
+{
+    size_t i, o = 0;
+
+    for (i = 0; i < text->len; i++)
+    {
+        unsigned char c = (unsigned char) text->str[i];
+
+        if (c == '\r')
+        {
+            if (i + 1 < text->len && text->str[i + 1] == '\n')
+                continue;
+            c = '\n';
+        }
+        else if (c != '\n' && c != '\t' && (c < 0x20 || c == 0x7f))
+            continue;
+
+        text->str[o++] = (char) c;
+    }
+    g_string_truncate (text, o);
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/* Read the paste up to ESC [ 2 0 1 ~. NULL if the terminal went silent in the middle of it. */
+
+static GString *
+tty_paste_collect (void)
+{
+    static const char end_mark[] = ESC_STR "[201~";
+    const size_t end_len = sizeof (end_mark) - 1;
+    GString *text = g_string_new ("");
+    char tail[sizeof (end_mark)] = "";
+    gint64 deadline = g_get_monotonic_time () + tty_paste_gap_usec;
+    gboolean ended = FALSE;
+
+    tty_nodelay (TRUE);
+    while (!ended)
+    {
+        int c = tty_lowlevel_getch ();
+
+        if (c == -1)
+        {
+            fd_set rs;
+            struct timeval tv;
+
+            if (g_get_monotonic_time () >= deadline)
+                break;
+
+            FD_ZERO (&rs);
+            FD_SET (input_fd, &rs);
+            tv.tv_sec = 0;
+            tv.tv_usec = 20000;
+            (void) select (input_fd + 1, &rs, NULL, NULL, &tv);
+            continue;
+        }
+
+        deadline = g_get_monotonic_time () + tty_paste_gap_usec;
+
+        memmove (tail, tail + 1, end_len - 1);
+        tail[end_len - 1] = (char) c;
+        // what does not fit is read and thrown away
+        if (text->len < TTY_PASTE_MAX_BYTES)
+            g_string_append_c (text, (char) c);
+        if (memcmp (tail, end_mark, end_len) == 0)
+        {
+            ended = TRUE;
+            if (text->len >= end_len
+                && memcmp (text->str + text->len - end_len, end_mark, end_len) == 0)
+                g_string_truncate (text, text->len - end_len);
+        }
+    }
+    tty_nodelay (FALSE);
+
+    if (!ended)
+    {
+        g_string_free (text, TRUE);
+        return NULL;
+    }
+
+    tty_paste_sanitize (text);
+    return text;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+/** The text of the last paste event. The caller frees it. */
+
+GString *
+tty_paste_take (void)
+{
+    GString *text = tty_paste_block;
+
+    tty_paste_block = NULL;
+    return text;
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -2940,8 +3106,19 @@ tty_get_event (struct Gpm_Event *event, gboolean redo_event, gboolean block)
     }
     else if (c == MCKEY_BRACKETED_PASTING_START)
     {
-        bracketed_pasting_in_progress = TRUE;
-        c = EV_NONE;
+        if (tty_paste_as_block)
+        {
+            // The whole paste is one event for the widget that has the focus
+            if (tty_paste_block != NULL)
+                g_string_free (tty_paste_take (), TRUE);
+            tty_paste_block = tty_paste_collect ();
+            c = (tty_paste_block != NULL) ? MCKEY_PASTE : EV_NONE;
+        }
+        else
+        {
+            bracketed_pasting_in_progress = TRUE;
+            c = EV_NONE;
+        }
     }
     else if (c == MCKEY_BRACKETED_PASTING_END)
     {

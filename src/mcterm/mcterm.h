@@ -104,6 +104,11 @@ gboolean mcterm_far2l_take_drop (WMcTerm *t, const far2l_drop_t *drop);
 /* Type @text into the shell. FALSE when the shell is gone or took none of it for a second;
    what it took by then stays on its line. */
 gboolean mcterm_send_text (WMcTerm *t, const char *text);
+/* Give the program a paste. It goes as one block in ESC[200~ ... ESC[201~ when the program
+   has asked for that; otherwise the lines are joined into one, so that no line runs by itself. */
+gboolean mcterm_send_paste (WMcTerm *t, const char *text, size_t len);
+/* The bytes that @mcterm_send_paste writes for @text; the caller frees them. */
+char *mcterm_paste_bytes (const char *text, size_t len, gboolean bracketed, size_t *out_len);
 
 /* Called while the master has output to read; FALSE when the fd is gone. */
 typedef gboolean (*mcterm_pty_drain_fn) (int fd, void *data);
@@ -343,6 +348,14 @@ mcterm_send_text (WMcTerm *t, const char *text)
 {
     (void) t;
     (void) text;
+    return FALSE;
+}
+static inline gboolean
+mcterm_send_paste (WMcTerm *t, const char *text, size_t len)
+{
+    (void) t;
+    (void) text;
+    (void) len;
     return FALSE;
 }
 

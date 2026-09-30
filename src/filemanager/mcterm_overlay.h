@@ -66,6 +66,9 @@ char *mcterm_overlay_cmdline_text (void);
 /* Panel view hooks for keys that are the command line's, called after mc's own keys. */
 cb_ret_t mcterm_overlay_cmdline_key (int parm);
 cb_ret_t mcterm_overlay_cmdline_enter (void);
+/* A bracketed paste that is for the shell: the terminal shown, or the panels up over the shell's
+   own command line. MSG_NOT_HANDLED for anything else. */
+cb_ret_t mcterm_overlay_handle_paste (const GString *text);
 
 cb_ret_t mcterm_overlay_handle_key (Widget *w, int parm,
                                     mcterm_overlay_command_cb_t execute_command,

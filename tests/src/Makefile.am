@@ -47,6 +47,7 @@ TESTS = \
 	tty_kitty_keyboard \
 	tty_win32_input \
 	usermenu__test_condition \
+	tty_paste \
 	usermenu__test_expand_format
 
 if ENABLE_MCTERM
@@ -54,6 +55,7 @@ TESTS += \
 	mcterm_far2l \
 	mcterm_key_encode \
 	mcterm_osc7_parse \
+	mcterm_paste \
 	mcterm_protocol_parse \
 	mcterm_pty_send \
 	mcterm_select
@@ -99,6 +101,9 @@ mcterm_key_encode_SOURCES = \
 mcterm_osc7_parse_SOURCES = \
 	mcterm_osc7_parse.c
 
+mcterm_paste_SOURCES = \
+	mcterm_paste.c
+
 mcterm_protocol_parse_SOURCES = \
 	mcterm_protocol_parse.c
 
@@ -137,6 +142,9 @@ tty_win32_input_SOURCES = \
 
 usermenu__test_condition_SOURCES = \
 	usermenu__test_condition.c
+
+tty_paste_SOURCES = \
+	tty_paste.c
 
 usermenu__test_expand_format_SOURCES = \
 	usermenu__test_expand_format.c

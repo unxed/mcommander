@@ -159,6 +159,7 @@ struct mcview_vterm_struct
     gboolean in_alt_screen;
 
     gboolean app_cursor_keys;
+    gboolean bracketed_paste;  // DECSET 2004: the program wants a paste in ESC[200~ ... ESC[201~
 
     gboolean insert_mode;  // IRM: a printed character pushes the rest of the line right
 
@@ -309,6 +310,9 @@ vterm_dispatch_csi (mcview_vterm_t *vt, unsigned char final_byte)
                 break;
             case 7:
                 mcview_vterm_set_autowrap (vt, final_byte == 'h');
+                break;
+            case 2004:
+                vt->bracketed_paste = (final_byte == 'h');
                 break;
             case 1049:
                 if (final_byte == 'h')
@@ -1552,6 +1556,7 @@ mcview_vterm_reset (mcview_vterm_t *vt)
     vt->utf8_len = 0;
     vt->utf8_expected = 0;
     vt->app_cursor_keys = FALSE;
+    vt->bracketed_paste = FALSE;
     vt->cursor_row = 0;
     vt->cursor_col = 0;
     vt->scroll_top = 0;
@@ -2343,6 +2348,14 @@ gboolean
 mcview_vterm_app_cursor_keys (const mcview_vterm_t *vt)
 {
     return vt->app_cursor_keys;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
+gboolean
+mcview_vterm_bracketed_paste (const mcview_vterm_t *vt)
+{
+    return vt->bracketed_paste;
 }
 
 /* --------------------------------------------------------------------------------------------- */
