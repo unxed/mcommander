@@ -121,6 +121,10 @@ guint mcview_vterm_osc7_generation (const mcview_vterm_t *vt);
 const char *mcview_vterm_osc133_raw (const mcview_vterm_t *vt);
 guint mcview_vterm_osc133_generation (const mcview_vterm_t *vt);
 
+/* The next application command (ESC _ ... BEL or ST) that arrived whole, without its introducer
+   and terminator; g_free() it. NULL when none waits. */
+char *mcview_vterm_take_apc (mcview_vterm_t *vt);
+
 /* Sixel pictures. The cell size is what turns pixels into rows and columns;
    whoever knows the terminal sets it. The generation moves whenever the list
    changes, so the host can tell when the pictures need painting again. */
