@@ -1879,7 +1879,8 @@ menus. A small number of other settings is saved, too.
 
 The
 **About**
-command shows the version of the program and who wrote it.
+command shows the version of the program and who wrote it, and the keyboard
+input in use, see [Keyboard input](#keyboard-input).
 
 ### Configuration
 
@@ -3666,7 +3667,8 @@ default value is 900 seconds.
 
 *clipboard_store*
 : This variable contains path (with options) to the external clipboard
-utility like 'xclip' to read text into X selection from file.
+utility like 'xclip' to read text into X selection from file. Without it the
+terminal gets the text itself, see [Clipboard](#clipboard).
 For example:
 
 <!-- -->
@@ -3797,6 +3799,196 @@ If external editor/viewer is launched via F4/F3 keys, M-Commander hopes that pro
 opens the file where it was last open. M-Commander doesn't prevent external editor/viewer
 to save and restore position in opened files.
 
+# Terminal input, clipboard and dropped files <a id="terminal-input"></a>
+
+This chapter says what M-Commander asks of the terminal it runs in and what it
+does with the answer, so that a report about a key, a copy or a paste can name
+the path it took. A terminal that does not take part is never told about any
+of it and behaves as it always did.
+
+## Keyboard input <a id="keyboard-input"></a>
+
+In the legacy form a terminal sends a key as bytes, and many combinations are
+the same bytes: Ctrl-Enter and Enter, Shift-Tab and Tab, Ctrl-Shift with a
+letter and the letter, Alt with a function key, the keys of the keypad and the
+keys above it. M-Commander asks the terminal for three better ways at start,
+in one go with the question about the sixel graphics (the answer to the
+Primary Device Attributes comes last, so that every terminal answers
+something), and takes the first that the terminal knows:
+
+**The far2l extensions**
+: `ESC _ far2l1 ESC \`. A terminal that has them (far2l's own, f4, and
+putty4far2l) answers `far2lok` and from then on sends every key, the mouse,
+and the requests for the clipboard and for dropped files in packets of its
+own. A key packet carries the virtual key, the character and the control key
+state of Windows, which is enough to tell all the combinations above apart.
+While the extensions are on, the other two ways are not asked for, since they
+would only carry the same information twice.
+
+**The kitty keyboard protocol**
+: `ESC [ ? u`. A terminal that answers it (kitty, and many others) is asked
+to report the keys that are the same bytes in the legacy form as escape
+sequences, with the alternate keys, and turned back to the legacy form at the
+end.
+
+**Win32 input mode**
+: `ESC [ ? 9001 $ p`. A terminal that knows it (Windows Terminal) is told to
+send every key as a record of the Windows console.
+
+A terminal that answers none of the three is used in the legacy form, and
+everything in this manual that does not say otherwise works there: the keys
+that legacy cannot tell apart are reachable through the menus or through
+another key. The terminal is not asked when the terminal type starts with
+`screen` or `tmux`, since a multiplexer would answer for itself and not pass
+the answer of the terminal behind it; nor when the variable below is set to
+a value that starts with 0.
+
+**MC_FAR2L**, **MC_KITTY_KEYBOARD**, **MC_WIN32_INPUT**
+: Set to 0 to leave one of the three questions out. They are the first thing
+to try when a terminal sends something M-Commander reads wrongly.
+
+Whichever way is in use, it is switched on when M-Commander starts and off at
+exit, and it is switched off while a child program has the terminal (a
+subshell on Ctrl-O, a command from the command line, an external editor or
+viewer) and on again when M-Commander takes the terminal back. The child never
+gets a terminal in a mode it did not ask for. The other way round, a program
+in the built-in terminal does not see what M-Commander asks of its terminal,
+and M-Commander does not see what the program asks of the emulator: a program
+that asks for the far2l extensions is answered only if the terminal
+M-Commander itself runs in has them, gets its keys in that form, and so can
+use them in turn, in M-Commander inside M-Commander as well. Clipboard and
+images are not passed on.
+
+**Which path is in use.** The
+**About**
+box (Options menu) has a line `Keyboard input:` that says `far2l`, `kitty`,
+`win32` or `legacy`. A report about a key in some terminal should quote it.
+
+**Plugins and keymaps.** A key reaches the keymap, the plugins and the Lua
+scripts as the same code and the same name, whichever way the terminal sent
+it; what changes is that more combinations arrive as themselves. Nothing has
+to be done for a plugin, and a terminal without the extensions behaves
+exactly as it did.
+
+**Checking by hand.** The decoders are tested by replaying recorded input
+(tests/src/tty_far2l_input.c, tty_win32_input.c, tty_kitty_keyboard.c), and
+doc/FAR2L_INPUT.md in the source tree has the details of the far2l packets. In
+short, for every case the same: start `mcommander`, look at the About box, and
+check that Ctrl-Enter, Shift-Tab and Alt-F4 in the panels each do their own
+action. On Linux in far2l's terminal or in f4 the box shows `far2l`; with
+`MC_FAR2L=0` or in a terminal that does not know the extensions, `kitty` or
+`legacy`; in Windows Terminal, on Windows or through ssh, `win32`. In tmux and
+screen the terminal is not asked; over ssh the answer comes from the terminal
+at the far end.
+
+## Clipboard <a id="clipboard"></a>
+
+Copying text in M-Commander puts it in a file of its own, the clipfile, and
+from there it goes to the clipboard of the system, in this order:
+
+1. If the `clipboard_store` command is set (see
+[Special Settings](#special-settings)), it is run on the file and nothing else
+is done.
+2. Otherwise a terminal with the far2l extensions gets the text as its
+clipboard. The terminal asks its user once; a refusal changes nothing.
+3. Otherwise the text is sent to the terminal with OSC 52 (the sequence
+`ESC ] 52 ; c ; TEXT BEL`, the text in base64), which puts it on the clipboard
+of the machine the terminal is on: the same over ssh as locally. A terminal that does not know the sequence
+ignores it. Text over 74994 bytes is not sent, because its base64 must fit
+in the 100000 bytes that terminals accept, and nothing is sent when the output
+is not a terminal.
+
+**MC_OSC52**
+: Set to 0 to turn the OSC 52 copy off.
+
+A program in the built-in terminal that sets the clipboard with OSC 52 (vim,
+tmux, a shell script, an ssh session) has its text passed on to the terminal
+M-Commander runs in in the same way, up to 100000 bytes of the sequence; more
+is dropped whole. Only setting is passed on: a query is not answered.
+
+Some terminals turn OSC 52 off or allow only writing; look in the settings of
+the terminal. Inside tmux the option `set -g set-clipboard on` is needed. If
+that does not suit, or a size limit other than the built-in one is wanted,
+`clipboard_store` can print the sequence itself; it is given the name of the
+file and its output goes to the terminal, so this works locally and over
+ssh. In the `[Misc]` section of `~/.config/mc6/ini`:
+
+```
+clipboard_store=perl -MMIME::Base64 -0777 -ne 'print chr(27), "]52;c;", encode_base64($_, ""), chr(27), chr(92)'
+```
+
+**Reading the clipboard with OSC 52 is not done, and will not be.** Any
+program that can write to the terminal could read the clipboard with it, and
+passwords are often there; most terminals turn it off or ask their user for
+this reason, and the answer would come back in the stream of the keyboard at a
+time nobody knows. Paste with the paste of the terminal (see below), or set
+`clipboard_paste` to a command that prints the clipboard, such as `xclip -o`
+or `wl-paste`. A terminal with the far2l extensions can be asked instead,
+and only when the user says paste: with neither `clipboard_store` nor
+`clipboard_paste` set, Shift-Insert reads the clipboard of the far2l terminal,
+which asks its user first; a refusal, no text or no answer in 15 seconds changes
+nothing, and at most 4 MiB go either way. The far2l terminal, not M-Commander,
+decides, and a program that merely writes to the terminal cannot read
+anything. doc/FAR2L_CLIPBOARD.md in the source tree has the details.
+
+On Windows the same holds for the terminal M-Commander runs in: what it does
+with OSC 52 and with the requests of the far2l extensions is its own, and so
+is the paste.
+
+## Paste <a id="paste"></a>
+
+M-Commander asks the terminal to mark a paste (bracketed paste, `ESC [ ? 2004
+h`), so the text between `ESC [ 200 ~` and `ESC [ 201 ~` is one paste and not
+a stream of keys. It is taken as a whole by the widget that has the focus:
+
+- The editor inserts it as text, as one step of Undo, without auto indent and
+with one redraw.
+- An input line (a dialog, the command line) inserts it on one line: a line break
+or a tab becomes a space, so a paste of several lines does not run the command
+or close the dialog.
+- In the built-in terminal a program that asked for bracketed paste (bash, zsh,
+vim, less) gets the paste in `ESC [ 200 ~ ... ESC [ 201 ~`; to any other
+program the lines are joined into one, so nothing runs before Enter is pressed.
+The same holds for the command line of the panels while a shell is under it.
+
+Control bytes in the paste are never run as commands: a line break is a line
+break, a tab stays, and every other control byte, `ESC` included, is dropped, so
+a paste cannot end itself early. At most 16 MiB are kept, and a paste that has
+been silent for two seconds without its end marker is given up. Typing is as it
+was. The clipboard of M-Commander itself (Shift-Insert) is not a paste of the
+terminal and works as before.
+
+## Dropped files <a id="dropped-files"></a>
+
+With the far2l extensions on, files dragged from the desktop onto the
+M-Commander window are copied into the directory of the panel they landed on
+(the protocol is the one of https://github.com/unxed/f4/blob/main/docs/FAR2L_DND.md,
+the same f4 speaks). M-Commander binds the reception once the extensions are
+on and gives it up before they are switched off, so a child program never gets
+a drop. A terminal without the protocol answers nothing, and nothing changes.
+
+Nothing travels unasked: the drop is one small event that names an offer;
+M-Commander lists it, reads the files one bounded chunk at a time and releases
+it, so it works over ssh the same as locally. The copy goes through the own
+file access of M-Commander, so a panel that shows an archive or a remote host is
+no special case. If the terminal does not say where the drop landed, M-Commander
+asks before it copies to the active panel. A drop is taken only while the
+panels are on top, not in a dialog, the viewer or the editor. A file that
+exists is asked about (overwrite, skip, overwrite all, cancel), a file that could
+not be received whole is removed, and a dialog with the progress is shown when
+the copy lasts longer than half a second; Esc or Abort gives it up, the files
+that arrived stay. Only plain files are taken, and only names that are plain
+names; every request is answered within 20 seconds or the drop is given up.
+Directories, and more than one request at a time, are not part of the first
+version of the protocol.
+
+A program in the built-in terminal that has the extensions on can receive the
+drop too, as mc in mc in a far2l terminal: what the outer terminal offers is
+served to it, one request at a time, to the extent the outer terminal has
+drop reception bound.
+
+<!-- help:break -->
+
 # Terminal databases
 
 M-Commander provides a way to fix your system terminal
@@ -3888,6 +4080,14 @@ nothing that needs one is available.
 **MC_SIXEL**
 : Set to 0 to say the terminal has no sixel graphics, or to 1 to say it has.
 Without the variable the terminal itself is asked.
+
+**MC_FAR2L**, **MC_KITTY_KEYBOARD**, **MC_WIN32_INPUT**
+: Set to 0 to not ask the terminal for the far2l extensions, the kitty keyboard
+protocol or Win32 input mode. See [Keyboard input](#keyboard-input).
+
+**MC_OSC52**
+: Set to 0 to not copy to the clipboard of the terminal with OSC 52. See
+[Clipboard](#clipboard).
 
 **KEYBOARD_KEY_TIMEOUT_US**
 : How long to wait for the rest of an escape sequence, in microseconds.
