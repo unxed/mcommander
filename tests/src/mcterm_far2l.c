@@ -156,7 +156,6 @@ bound_terminal (guint8 *binding, far2l_dnd_grant_t *grant)
     mcterm_far2l_t *f = mcterm_far2l_new (&fake_parent);
     far2l_reply_t reply;
     GByteArray *keep;
-    char *answer;
     int i;
 
     for (i = 0; i < FAR2L_ID_LEN; i++)
