@@ -196,6 +196,9 @@ extern char *tty_osc52_sequence (const char *data, size_t len);
 extern gboolean tty_osc52_write (const char *data, size_t len);
 /* Pixels per cell, 0 when the terminal did not say. */
 extern void tty_cell_size (int *width, int *height);
+/* The terminal answered the DECRQM question about mode 9001 (Win32 input mode) with set or reset.
+   MC_WIN32_INPUT=0 turns the question off. */
+extern gboolean tty_has_win32_input (void);
 
 /* Clear screen */
 extern void tty_clear_screen (void);

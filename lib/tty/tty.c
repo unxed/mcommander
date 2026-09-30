@@ -93,6 +93,7 @@ static int background_rgb = -1;
 
 static gboolean has_sixel = FALSE;
 static gboolean has_kitty_keyboard = FALSE;
+static gboolean has_win32_input = FALSE;
 static int cell_width = 0;
 static int cell_height = 0;
 
@@ -211,8 +212,7 @@ tty_raw_write (const char *data, size_t len)
    and CSI 6 ; <height> ; <width> t. The sequences are taken out of the
    buffer as they are found, and what is left is the user's. */
 static void
-tty_parse_graphics_reply (char *buf, size_t *len, gboolean *sixel_seen, gboolean *cell_seen,
-                          gboolean *bg_seen)
+tty_parse_graphics_reply (char *buf, size_t *len, gboolean *sixel_seen)
 {
     size_t i = 0;
 
@@ -260,18 +260,19 @@ tty_parse_graphics_reply (char *buf, size_t *len, gboolean *sixel_seen, gboolean
                 }
             }
 
-            // find the terminator so the reply is not left for the keyboard
-            while (q < end && *q != '\a' && !(*q == ESC_CHAR && q + 1 < end && q[1] == '\\'))
+            /* Find the terminator so the reply is not left for the keyboard. The tty can
+               take a BEL out (see the query), so an ESC that starts no ST ends it too. */
+            while (q < end && *q != '\a' && *q != ESC_CHAR)
                 q++;
-            if (q >= end)
+            if (q >= end || (*q == ESC_CHAR && q + 1 >= end))
                 break;  // still arriving
 
             if (n == 3)
-            {
                 background_rgb = (comp[0] << 16) | (comp[1] << 8) | comp[2];
-                *bg_seen = TRUE;
-            }
-            q += *q == '\a' ? 1 : 2;
+            if (*q == '\a')
+                q++;
+            else if (q[1] == '\\')
+                q += 2;
             taken = (size_t) (q - (buf + i));
             memmove (buf + i, buf + i + taken, *len - i - taken);
             *len -= taken;
@@ -286,8 +287,8 @@ tty_parse_graphics_reply (char *buf, size_t *len, gboolean *sixel_seen, gboolean
 
         if (*p == '?')
         {
-            int n = 0;
-            gboolean have = FALSE, sixel = FALSE;
+            int n = 0, first = 0;
+            gboolean have = FALSE, sixel = FALSE, have_first = FALSE;
 
             for (p++; p < end; p++)
             {
@@ -295,6 +296,15 @@ tty_parse_graphics_reply (char *buf, size_t *len, gboolean *sixel_seen, gboolean
                 {
                     n = n * 10 + (*p - '0');
                     have = TRUE;
+                }
+                else if (*p == '$' && have_first && first == 9001 && have && p + 1 < end
+                         && p[1] == 'y')
+                {
+                    /* CSI ? 9001 ; <state> $ y: Win32 input mode is known (1 set, 2 reset) */
+                    if (n == 1 || n == 2)
+                        has_win32_input = TRUE;
+                    taken = (size_t) (p + 2 - (buf + i));
+                    break;
                 }
                 else if (*p == 'u' && have)
                 {
@@ -305,6 +315,11 @@ tty_parse_graphics_reply (char *buf, size_t *len, gboolean *sixel_seen, gboolean
                 }
                 else if (*p == ';' || *p == 'c')
                 {
+                    if (have && !have_first)
+                    {
+                        first = n;
+                        have_first = TRUE;
+                    }
                     if (have && n == 4)
                         sixel = TRUE;
                     n = 0;
@@ -337,7 +352,6 @@ tty_parse_graphics_reply (char *buf, size_t *len, gboolean *sixel_seen, gboolean
                     cell_width = w;
                     cell_height = h;
                 }
-                *cell_seen = TRUE;
                 taken = (size_t) (p + 1 - (buf + i));
             }
         }
@@ -362,18 +376,20 @@ tty_probe_graphics (void)
     const char *term = getenv ("TERM");
     char buf[512];
     size_t len = 0;
-    gboolean sixel_seen = FALSE, cell_seen = FALSE;
-    gboolean bg_seen = FALSE;
+    gboolean sixel_seen = FALSE;
     gboolean forced_off = env != NULL && env[0] == '0';
     gboolean forced_on = env != NULL && env[0] == '1';
     gboolean multiplexer =
         term != NULL && (strncmp (term, "screen", 6) == 0 || strncmp (term, "tmux", 4) == 0);
     gboolean no_sixel = forced_off || (!forced_on && multiplexer);
     gboolean ask_kitty = !multiplexer && (kitty_env == NULL || kitty_env[0] != '0');
+    const char *win32_env = getenv ("MC_WIN32_INPUT");
+    gboolean ask_win32 = !multiplexer && (win32_env == NULL || win32_env[0] != '0');
     int waited_ms = 0;
 
     has_sixel = FALSE;
     has_kitty_keyboard = FALSE;
+    has_win32_input = FALSE;
     cell_width = 0;
     cell_height = 0;
 
@@ -387,35 +403,34 @@ tty_probe_graphics (void)
         {
             cell_width = ws.ws_xpixel / ws.ws_col;
             cell_height = ws.ws_ypixel / ws.ws_row;
-            cell_seen = TRUE;
         }
     }
 #endif
 
     /* A multiplexer answers for itself and keeps the DCS: no sixel through it
        unless the user says so. */
-    if (no_sixel && !ask_kitty)
+    if (no_sixel && !ask_kitty && !ask_win32)
         return;
 
     if (isatty (STDIN_FILENO) && isatty (STDOUT_FILENO))
     {
-        /* CSI ? u goes before DA1, so its answer is in before the DA1 one */
-        static const char query[] = ESC_STR "[?u" ESC_STR "[c" ESC_STR "[16t" ESC_STR "]11;?\a";
+        /* Every terminal answers DA1, and answers in the order it is asked: DA1 goes
+           last, so its answer comes after all the others, the one about the kitty keyboard
+           protocol and the DECRQM one about mode 9001 (Win32 input mode) too. OSC 11 ends
+           with ST, not BEL: the answer ends the same way, and with S-Lang BEL (Ctrl-G) is
+           the interrupt character, which the tty takes out of the input. */
+        static const char kitty_query[] = ESC_STR "[?u";
+        static const char win32_query[] = ESC_STR "[?9001$p";
+        static const char query[] = ESC_STR "[16t" ESC_STR "]11;?" ESC_STR "\\" ESC_STR "[c";
 
         if (ask_kitty)
-            tty_raw_write (query, sizeof (query) - 1);
-        else
-            tty_raw_write (query + 4, sizeof (query) - 5);
+            tty_raw_write (kitty_query, sizeof (kitty_query) - 1);
+        if (ask_win32)
+            tty_raw_write (win32_query, sizeof (win32_query) - 1);
+        tty_raw_write (query, sizeof (query) - 1);
 
-        /* Every terminal answers DA1; not every one answers about the cell or the
-           background, so once DA1 is in, the rest gets a short while only, and the
-           background, which only a skin that keeps the terminal's own ground even asks
-           about, a shorter one still. A terminal that answers nothing costs
-           the whole wait once, at startup. */
-        while (len < sizeof (buf) - 1 && !(sixel_seen && cell_seen && bg_seen)
-               && waited_ms < (!sixel_seen      ? 300
-                                   : !cell_seen ? 100
-                                                : 50))
+        /* A terminal that answers nothing costs the whole wait once, at startup. */
+        while (len < sizeof (buf) - 1 && !sixel_seen && waited_ms < 1000)
         {
             fd_set fds;
             struct timeval tv = { 0, 50000 };
@@ -432,7 +447,7 @@ tty_probe_graphics (void)
             if (n <= 0)
                 break;
             len += (size_t) n;
-            tty_parse_graphics_reply (buf, &len, &sixel_seen, &cell_seen, &bg_seen);
+            tty_parse_graphics_reply (buf, &len, &sixel_seen);
         }
 
         /* Whatever else came in was typed: it goes back to the keyboard. */
@@ -472,50 +487,21 @@ tty_has_kitty_keyboard (void)
 
 /* --------------------------------------------------------------------------------------------- */
 
-char *
-tty_osc52_sequence (const char *data, size_t len)
-{
-    char *encoded, *sequence;
-
-    if (data == NULL || len == 0 || len > TTY_OSC52_MAX_TEXT)
-        return NULL;
-
-    encoded = g_base64_encode ((const guchar *) data, len);
-    sequence = g_strconcat (ESC_STR "]52;c;", encoded, "\a", (char *) NULL);
-    g_free (encoded);
-
-    return sequence;
-}
-
-/* --------------------------------------------------------------------------------------------- */
-
-gboolean
-tty_osc52_write (const char *data, size_t len)
-{
-    const char *env = getenv ("MC_OSC52");
-    char *sequence;
-
-    if ((env != NULL && env[0] == '0') || !isatty (STDOUT_FILENO))
-        return FALSE;
-
-    sequence = tty_osc52_sequence (data, len);
-    if (sequence == NULL)
-        return FALSE;
-
-    tty_raw_write (sequence, strlen (sequence));
-    g_free (sequence);
-
-    return TRUE;
-}
-
-/* --------------------------------------------------------------------------------------------- */
-
 void
 tty_cell_size (int *width, int *height)
 {
     *width = cell_width;
     *height = cell_height;
 }
+
+/* --------------------------------------------------------------------------------------------- */
+
+gboolean
+tty_has_win32_input (void)
+{
+    return has_win32_input;
+}
+
 /* --------------------------------------------------------------------------------------------- */
 
 /**
