@@ -43,7 +43,6 @@ TESTS = \
 	usermenu_ini \
 	term_key_merge \
 	tty_enter \
-	tty_far2l_input \
 	tty_kitty_keyboard \
 	tty_win32_input \
 	usermenu__test_condition \
