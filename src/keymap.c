@@ -1379,7 +1379,8 @@ keymap_far_fast_find_init (mc_config_t *base, mc_config_t *keymap)
         {
             const char *base_action = g_hash_table_lookup (base_keys, key);
 
-            if (base_action == NULL || strcmp (base_action, (const char *) action) != 0)
+            if (base_action == NULL
+                || keybind_lookup_action (base_action) != keybind_lookup_action ((const char *) action))
                 g_hash_table_add (far_fast_find_kept, key);
         }
 

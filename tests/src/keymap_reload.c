@@ -588,8 +588,8 @@ START_TEST (test_keymap_far_fast_find_user_keys)
     mc_config_set_string_raw (base, KEYMAP_SECTION_FILEMANAGER, "CdQuick", "alt-c");
     mc_config_set_string_raw (base, KEYMAP_SECTION_FILEMANAGER, "Find", "alt-w");
 
-    /* the same key for the same action, as a copy of the global keymap has it */
-    mc_config_set_string_raw (user, KEYMAP_SECTION_FILEMANAGER, "CdQuick", "alt-c");
+    /* action names are case-insensitive, just as they are in the loaded keymap */
+    mc_config_set_string_raw (user, KEYMAP_SECTION_FILEMANAGER, "cdquick", "alt-c");
     /* a key of the base keymap for another action */
     mc_config_set_string_raw (user, KEYMAP_SECTION_FILEMANAGER, "History", "alt-w");
     /* a key the base keymap does not bind, in the panels and in the edit lines */
