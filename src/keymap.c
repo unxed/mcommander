@@ -1321,7 +1321,7 @@ keymap_far_fast_find_key (int key)
     if (key == KEY_KITTY_EVENT)
     {
         tty_key_event_t ev;
-        char text[64];
+        char text[TTY_KITTY_TEXT_MAX * 4];
 
         if (!tty_key_event (key, &ev) || (ev.mods & TTY_KITTY_MOD_ALT) == 0
             || (ev.mods & (TTY_KITTY_MOD_CTRL | TTY_KITTY_MOD_SUPER | TTY_KITTY_MOD_HYPER)) != 0

@@ -438,7 +438,10 @@ seq_event (const char *seq, tty_key_event_t *ev)
 START_TEST (test_kitty_event_text)
 {
     tty_key_event_t ev;
-    char text[16];
+    char text[TTY_KITTY_TEXT_MAX * 4];
+    char expected[65];
+    GString *seq;
+    int i;
 
     /* the whole text of the event: a letter with a combining mark is three bytes of UTF-8 */
     ck_assert (seq_event (ESC_STR "[97;3;97:776u", &ev));
@@ -447,6 +450,17 @@ START_TEST (test_kitty_event_text)
 
     /* a text that does not fit is not cut */
     ck_assert_uint_eq (tty_key_event_text (&ev, text, 2), 0);
+
+    /* a long kitty text is not mistaken for the character of its base-layout key */
+    seq = g_string_new (ESC_STR "[97;3;98");
+    for (i = 1; i < 65; i++)
+        g_string_append (seq, ":98");
+    g_string_append_c (seq, 'u');
+    ck_assert (seq_event (seq->str, &ev));
+    ck_assert_uint_eq (tty_key_event_text (&ev, text, sizeof (text)), 65);
+    memset (expected, 'b', sizeof (expected));
+    ck_assert (memcmp (text, expected, sizeof (expected)) == 0);
+    g_string_free (seq, TRUE);
 
     /* Alt with a Cyrillic letter and no key of the base layout: the letter of the key */
     ck_assert (seq_event (ESC_STR "[1092;3u", &ev));

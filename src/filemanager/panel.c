@@ -4013,6 +4013,10 @@ panel_far_fast_find_text (int key, char *text, size_t size)
 
         if (len != 0)
             return (int) len;
+
+        // a typed event that did not fit must not fall back to its base-layout key
+        if (ev.text_len > 0)
+            return 0;
     }
 
     c = key & ~(KEY_M_ALT | KEY_M_SHIFT);
@@ -4085,7 +4089,7 @@ panel_far_fast_find_rest (int key)
 static gboolean
 panel_far_fast_find (WPanel *panel, int key)
 {
-    char text[64];
+    char text[TTY_KITTY_TEXT_MAX * 4];
     int len, i;
 
     if (!keymap_far_mode || !keymap_far_fast_find || !keymap_far_fast_find_key (key))
