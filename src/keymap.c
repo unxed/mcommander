@@ -1416,6 +1416,23 @@ keymap_far_fast_find_takes (int key)
 
 /* --------------------------------------------------------------------------------------------- */
 
+const char *
+keymap_far_fast_find_shortcut (const global_keymap_t *keymap, long command)
+{
+    size_t i;
+
+    if (keymap == NULL)
+        return NULL;
+
+    for (i = 0; keymap[i].key != 0; i++)
+        if (keymap[i].command == command && !keymap_far_fast_find_takes ((int) keymap[i].key))
+            return (keymap[i].caption[0] != '\0') ? keymap[i].caption : NULL;
+
+    return NULL;
+}
+
+/* --------------------------------------------------------------------------------------------- */
+
 void
 keymap_load (gboolean load_from_file)
 {

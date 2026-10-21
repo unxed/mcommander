@@ -535,6 +535,7 @@ START_TEST (test_keymap_far_fast_find)
     ck_assert_int_eq (keybind_lookup_keymap_command (filemanager_map, ALT ('?')), CK_Find);
     ck_assert_int_eq (keybind_lookup_keymap_command (filemanager_map, ALT ('c')), CK_CdQuick);
     ck_assert_int_eq (keybind_lookup_keymap_command (panel_map, ALT ('H')), CK_History);
+    ck_assert_int_eq (keybind_lookup_keymap_command (filemanager_map, ALT ('x')), CK_ExtendedKeyMap);
     keymap_free ();
 
     /* with the fast find the keymaps keep every key: the panels give up the Alt keys with a
@@ -551,6 +552,8 @@ START_TEST (test_keymap_far_fast_find)
     ck_assert (keymap_far_fast_find_takes (ALT ('H')));
     ck_assert (keymap_far_fast_find_takes (ALT ('s')));
     ck_assert (keymap_far_fast_find_takes (ALT ('o')));
+    /* Menu shortcuts must hide the Alt-x prefix when fast find takes it. */
+    ck_assert_ptr_null (keymap_far_fast_find_shortcut (filemanager_map, CK_ExtendedKeyMap));
     /* the Alt keys of the command line too: Far has none */
     ck_assert (keymap_far_fast_find_takes (ALT ('p')));
 

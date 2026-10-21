@@ -73,6 +73,7 @@ gboolean keymap_far_fast_find_key (int key);
 void keymap_far_fast_find_init (mc_config_t *base, mc_config_t *keymap);
 gboolean keymap_far_fast_find_kept (int key);
 gboolean keymap_far_fast_find_takes (int key);
+const char *keymap_far_fast_find_shortcut (const global_keymap_t *keymap, long command);
 void keymap_load (gboolean load_from_file);
 void keymap_free (void);
 void keymap_save_old_maps (void);
